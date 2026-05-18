@@ -1,85 +1,210 @@
-(input as nullable text) as nullable text =>
 let
-    // null の場合は null を返す
-    Source = input,
+    Config = [
+        BaseURL = "https://api.reuse.ishibashi.co.jp",
+        RelativePath = "api/v1/admin/assessments/",
+        ApiKey = ApiKeyParameter,
+        StartDate = #date(2025, 11, 1),
+        EndDate = Date.From(DateTime.LocalNow()),
+        DaysPerRange = 7,
+        Limit = 1000
+    ],
 
-    // 全角カタカナ → 半角カタカナの対応表
-    KanaKeys = {
-        "ア","イ","ウ","エ","オ",
-        "カ","キ","ク","ケ","コ",
-        "サ","シ","ス","セ","ソ",
-        "タ","チ","ツ","テ","ト",
-        "ナ","ニ","ヌ","ネ","ノ",
-        "ハ","ヒ","フ","ヘ","ホ",
-        "マ","ミ","ム","メ","モ",
-        "ヤ","ユ","ヨ",
-        "ラ","リ","ル","レ","ロ",
-        "ワ","ヲ","ン",
-        "ァ","ィ","ゥ","ェ","ォ",
-        "ャ","ュ","ョ","ッ",
-        "ー",
-        "ガ","ギ","グ","ゲ","ゴ",
-        "ザ","ジ","ズ","ゼ","ゾ",
-        "ダ","ヂ","ヅ","デ","ド",
-        "バ","ビ","ブ","ベ","ボ",
-        "パ","ピ","プ","ペ","ポ",
-        "ヴ",
-        "ヷ","ヸ","ヹ","ヺ",
-        "。","、","・","「","」","゛","゜"
+    ResponseColumnNames = {
+        "assessment_type",
+        "assessment_slip_number",
+        "receipt_number",
+        "status",
+        "assessment_total_price_including_tax",
+        "store_id",
+        "name",
+        "name_kana",
+        "payment_type",
+        "bank_name",
+        "account_type",
+        "is_japan_post_bank",
+        "branch_number",
+        "account_number",
+        "branch_and_account_number_of_japan_post_bank",
+        "assessment_confirmation_datetime",
+        "assessment_cancellation_datetime"
     },
 
-    KanaValues = {
-        "ｱ","ｲ","ｳ","ｴ","ｵ",
-        "ｶ","ｷ","ｸ","ｹ","ｺ",
-        "ｻ","ｼ","ｽ","ｾ","ｿ",
-        "ﾀ","ﾁ","ﾂ","ﾃ","ﾄ",
-        "ﾅ","ﾆ","ﾇ","ﾈ","ﾉ",
-        "ﾊ","ﾋ","ﾌ","ﾍ","ﾎ",
-        "ﾏ","ﾐ","ﾑ","ﾒ","ﾓ",
-        "ﾔ","ﾕ","ﾖ",
-        "ﾗ","ﾘ","ﾙ","ﾚ","ﾛ",
-        "ﾜ","ｦ","ﾝ",
-        "ｧ","ｨ","ｩ","ｪ","ｫ",
-        "ｬ","ｭ","ｮ","ｯ",
-        "ｰ",
-        "ｶﾞ","ｷﾞ","ｸﾞ","ｹﾞ","ｺﾞ",
-        "ｻﾞ","ｼﾞ","ｽﾞ","ｾﾞ","ｿﾞ",
-        "ﾀﾞ","ﾁﾞ","ﾂﾞ","ﾃﾞ","ﾄﾞ",
-        "ﾊﾞ","ﾋﾞ","ﾌﾞ","ﾍﾞ","ﾎﾞ",
-        "ﾊﾟ","ﾋﾟ","ﾌﾟ","ﾍﾟ","ﾎﾟ",
-        "ｳﾞ",
-        "ﾜﾞ","ｲﾞ","ｴﾞ","ｦﾞ",
-        "｡","､","･","｢","｣","ﾞ","ﾟ"
-    },
+    RequestBody = Binary.Buffer(Text.ToBinary("{}")),
 
-    KanaMap = Record.FromList(KanaValues, KanaKeys),
-
-    // 1文字ずつ変換
-    Converted =
-        if Source = null then
-            null
-        else
-            Text.Combine(
+    CreateDateRanges = (StartDate as date, EndDate as date, DaysPerRange as number) as list =>
+        let
+            Starts =
+                if EndDate <= StartDate then
+                    {}
+                else
+                    List.Generate(
+                        () => StartDate,
+                        each _ < EndDate,
+                        each Date.AddDays(_, DaysPerRange)
+                    ),
+            Ranges =
                 List.Transform(
-                    Text.ToList(Source),
+                    Starts,
                     each
-                        let
-                            c = _,
-                            n = Character.ToNumber(c)
-                        in
-                            // 全角スペース → 半角スペース
-                            if c = "　" then
-                                " "
-
-                            // 全角英数字・全角ASCII記号
-                            // ＡＢＣ１２３！＃％ などを ABC123!#% に変換
-                            else if n >= 65281 and n <= 65374 then
-                                Character.FromNumber(n - 65248)
-
-                            // 全角カタカナ・句読点など
-                            else
-                                Record.FieldOrDefault(KanaMap, c, c)
+                        [
+                            From = _,
+                            To = List.Min({Date.AddDays(_, DaysPerRange), EndDate})
+                        ]
                 )
+        in
+            Ranges,
+
+    BuildQuery = (PageNumber as number, FromDate as date, ToDate as date) as record =>
+        [
+            #"limit" = Text.From(Config[Limit]),
+            #"page" = Text.From(PageNumber),
+            #"filters[0][field]" = "assessment_completed_at_from",
+            #"filters[0][operator]" = "gte",
+            #"filters[0][value]" = Date.ToText(FromDate, "yyyy-MM-dd"),
+            #"filters[1][field]" = "assessment_completed_at_to",
+            #"filters[1][operator]" = "lt",
+            #"filters[1][value]" = Date.ToText(ToDate, "yyyy-MM-dd")
+        ],
+
+    GetJson = (PageNumber as number, FromDate as date, ToDate as date) as record =>
+        let
+            QueryParams = BuildQuery(PageNumber, FromDate, ToDate),
+            Response =
+                try
+                    Json.Document(
+                        Web.Contents(
+                            Config[BaseURL],
+                            [
+                                RelativePath = Config[RelativePath],
+                                Query = QueryParams,
+                                Headers = [#"X-API-KEY" = Config[ApiKey]],
+                                Content = RequestBody
+                            ]
+                        )
+                    )
+                otherwise
+                    error Text.Format(
+                        "API request failed. From=#{0}, To=#{1}, Page=#{2}",
+                        {
+                            Date.ToText(FromDate, "yyyy-MM-dd"),
+                            Date.ToText(ToDate, "yyyy-MM-dd"),
+                            Text.From(PageNumber)
+                        }
+                    ),
+
+            JsonRecord =
+                if Value.Is(Response, type record) then
+                    Response
+                else
+                    error "API response is not a JSON record."
+        in
+            JsonRecord,
+
+    ExtractData = (Json as record) as list =>
+        if Record.HasFields(Json, "data")
+            and Json[data] <> null
+            and Value.Is(Json[data], type list)
+        then
+            Json[data]
+        else
+            {},
+
+    ExtractTotal = (Json as record) as number =>
+        let
+            Meta =
+                if Record.HasFields(Json, "meta")
+                    and Json[meta] <> null
+                    and Value.Is(Json[meta], type record)
+                then
+                    Json[meta]
+                else
+                    [],
+            Total =
+                if Record.HasFields(Meta, "total") then
+                    Number.From(Meta[total])
+                else
+                    0
+        in
+            Total,
+
+    GetPageData = (PageNumber as number, FromDate as date, ToDate as date) as list =>
+        ExtractData(GetJson(PageNumber, FromDate, ToDate)),
+
+    GetRangeData = (FromDate as date, ToDate as date) as list =>
+        let
+            FirstJson = GetJson(1, FromDate, ToDate),
+            Total = ExtractTotal(FirstJson),
+            PagesCount =
+                if Total <= 0 or Config[Limit] <= 0 then
+                    0
+                else
+                    Number.RoundUp(Total / Config[Limit]),
+
+            FirstData = ExtractData(FirstJson),
+
+            RemainingPageNumbers =
+                if PagesCount <= 1 then
+                    {}
+                else
+                    List.Numbers(2, PagesCount - 1),
+
+            RemainingPages =
+                List.Transform(
+                    RemainingPageNumbers,
+                    each GetPageData(_, FromDate, ToDate)
+                ),
+
+            PageDataLists = List.Combine({{FirstData}, RemainingPages}),
+            Records = List.Combine(PageDataLists)
+        in
+            Records,
+
+    DateRanges =
+        List.Buffer(
+            CreateDateRanges(
+                Config[StartDate],
+                Config[EndDate],
+                Config[DaysPerRange]
             )
+        ),
+
+    RangeDataLists =
+        List.Transform(
+            DateRanges,
+            each GetRangeData(_[From], _[To])
+        ),
+
+    AllRecords = List.Combine(RangeDataLists),
+
+    Result =
+        Table.FromRecords(
+            AllRecords,
+            ResponseColumnNames,
+            MissingField.UseNull
+        ),
+
+    TypedResult =
+        Table.TransformColumnTypes(
+            Result,
+            {
+                {"assessment_type", type text},
+                {"assessment_slip_number", type text},
+                {"receipt_number", type text},
+                {"status", type text},
+                {"assessment_total_price_including_tax", Int64.Type},
+                {"store_id", Int64.Type},
+                {"name", type text},
+                {"name_kana", type text},
+                {"payment_type", type text},
+                {"bank_name", type text},
+                {"account_type", type text},
+                {"is_japan_post_bank", type logical},
+                {"branch_number", type text},
+                {"account_number", type text},
+                {"branch_and_account_number_of_japan_post_bank", type text},
+                {"assessment_confirmation_datetime", type datetime},
+                {"assessment_cancellation_datetime", type datetime}
+            }
+        )
 in
-    Converted
+    TypedResult
