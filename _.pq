@@ -1,210 +1,209 @@
+// Assessments_Source
 let
     Config = [
         BaseURL = "https://api.reuse.ishibashi.co.jp",
-        RelativePath = "api/v1/admin/assessments/",
+        Endpoint = "api/v1/admin/assessments/",
         ApiKey = ApiKeyParameter,
         StartDate = #date(2025, 11, 1),
         EndDate = Date.From(DateTime.LocalNow()),
         DaysPerRange = 7,
-        Limit = 1000
+        PageSize = 1000
     ],
-
-    ResponseColumnNames = {
-        "assessment_type",
-        "assessment_slip_number",
-        "receipt_number",
-        "status",
-        "assessment_total_price_including_tax",
-        "store_id",
-        "name",
-        "name_kana",
-        "payment_type",
-        "bank_name",
-        "account_type",
-        "is_japan_post_bank",
-        "branch_number",
-        "account_number",
-        "branch_and_account_number_of_japan_post_bank",
-        "assessment_confirmation_datetime",
-        "assessment_cancellation_datetime"
-    },
-
-    RequestBody = Binary.Buffer(Text.ToBinary("{}")),
-
-    CreateDateRanges = (StartDate as date, EndDate as date, DaysPerRange as number) as list =>
+    PostBody = Binary.Buffer(Text.ToBinary("{}")),
+    CreateDateRanges = (start as date, end_ as date, days as number) as list =>
+        if end_ <= start then
+            {}
+        else
+            List.Transform(
+                List.Generate(() => start, each _ < end_, each Date.AddDays(_, days)),
+                each [From = _, To = List.Min({Date.AddDays(_, days), end_})]
+            ),
+    BuildQuery = (pageNum as number, fromDate as date, toDate as date) as record => [
+        limit = Text.From(Config[PageSize]),
+        page = Text.From(pageNum),
+        #"filters[0][field]" = "assessment_completed_at_from",
+        #"filters[0][operator]" = "gte",
+        #"filters[0][value]" = Date.ToText(fromDate, "yyyy-MM-dd"),
+        #"filters[1][field]" = "assessment_completed_at_to",
+        #"filters[1][operator]" = "lt",
+        #"filters[1][value]" = Date.ToText(toDate, "yyyy-MM-dd")
+    ],
+    FetchPage = (pageNum as number, fromDate as date, toDate as date) as record =>
         let
-            Starts =
-                if EndDate <= StartDate then
-                    {}
-                else
-                    List.Generate(
-                        () => StartDate,
-                        each _ < EndDate,
-                        each Date.AddDays(_, DaysPerRange)
-                    ),
-            Ranges =
-                List.Transform(
-                    Starts,
-                    each
+            Raw = try
+                Json.Document(
+                    Web.Contents(
+                        Config[BaseURL],
                         [
-                            From = _,
-                            To = List.Min({Date.AddDays(_, DaysPerRange), EndDate})
+                            RelativePath = Config[Endpoint],
+                            Query = BuildQuery(pageNum, fromDate, toDate),
+                            Headers = [#"X-API-KEY" = Config[ApiKey]],
+                            Content = PostBody
                         ]
+                    )
                 )
         in
-            Ranges,
-
-    BuildQuery = (PageNumber as number, FromDate as date, ToDate as date) as record =>
-        [
-            #"limit" = Text.From(Config[Limit]),
-            #"page" = Text.From(PageNumber),
-            #"filters[0][field]" = "assessment_completed_at_from",
-            #"filters[0][operator]" = "gte",
-            #"filters[0][value]" = Date.ToText(FromDate, "yyyy-MM-dd"),
-            #"filters[1][field]" = "assessment_completed_at_to",
-            #"filters[1][operator]" = "lt",
-            #"filters[1][value]" = Date.ToText(ToDate, "yyyy-MM-dd")
-        ],
-
-    GetJson = (PageNumber as number, FromDate as date, ToDate as date) as record =>
+            if Raw[HasError] then
+                error Text.Format(
+                    "API request failed: From=#{0}, To=#{1}, Page=#{2}",
+                    {
+                        Date.ToText(fromDate, "yyyy-MM-dd"),
+                        Date.ToText(toDate, "yyyy-MM-dd"),
+                        Text.From(pageNum)
+                    }
+                )
+            else if not Value.Is(Raw[Value], type record) then
+                error "API response is not a JSON record."
+            else
+                Raw[Value],
+    ExtractData = (json as record) as list =>
         let
-            QueryParams = BuildQuery(PageNumber, FromDate, ToDate),
-            Response =
-                try
-                    Json.Document(
-                        Web.Contents(
-                            Config[BaseURL],
-                            [
-                                RelativePath = Config[RelativePath],
-                                Query = QueryParams,
-                                Headers = [#"X-API-KEY" = Config[ApiKey]],
-                                Content = RequestBody
-                            ]
+            val = try json[data] otherwise null
+        in
+            if val <> null and Value.Is(val, type list) then val else {},
+    ExtractTotal = (json as record) as number =>
+        try Number.From(json[meta][total]) otherwise 0,
+    FetchRange = (fromDate as date, toDate as date) as list =>
+        let
+            FirstResponse = FetchPage(1, fromDate, toDate),
+            Total = ExtractTotal(FirstResponse),
+            PageCount =
+                if Total <= 0 then
+                    0
+                else
+                    Number.RoundUp(Total / Config[PageSize]),
+            AllPages = {ExtractData(FirstResponse)}
+                & (
+                    if PageCount <= 1 then
+                        {}
+                    else
+                        List.Transform(
+                            List.Numbers(2, PageCount - 1),
+                            each ExtractData(FetchPage(_, fromDate, toDate))
                         )
-                    )
-                otherwise
-                    error Text.Format(
-                        "API request failed. From=#{0}, To=#{1}, Page=#{2}",
-                        {
-                            Date.ToText(FromDate, "yyyy-MM-dd"),
-                            Date.ToText(ToDate, "yyyy-MM-dd"),
-                            Text.From(PageNumber)
-                        }
-                    ),
-
-            JsonRecord =
-                if Value.Is(Response, type record) then
-                    Response
-                else
-                    error "API response is not a JSON record."
+                )
         in
-            JsonRecord,
-
-    ExtractData = (Json as record) as list =>
-        if Record.HasFields(Json, "data")
-            and Json[data] <> null
-            and Value.Is(Json[data], type list)
-        then
-            Json[data]
-        else
-            {},
-
-    ExtractTotal = (Json as record) as number =>
-        let
-            Meta =
-                if Record.HasFields(Json, "meta")
-                    and Json[meta] <> null
-                    and Value.Is(Json[meta], type record)
-                then
-                    Json[meta]
-                else
-                    [],
-            Total =
-                if Record.HasFields(Meta, "total") then
-                    Number.From(Meta[total])
-                else
-                    0
-        in
-            Total,
-
-    GetPageData = (PageNumber as number, FromDate as date, ToDate as date) as list =>
-        ExtractData(GetJson(PageNumber, FromDate, ToDate)),
-
-    GetRangeData = (FromDate as date, ToDate as date) as list =>
-        let
-            FirstJson = GetJson(1, FromDate, ToDate),
-            Total = ExtractTotal(FirstJson),
-            PagesCount =
-                if Total <= 0 or Config[Limit] <= 0 then
-                    0
-                else
-                    Number.RoundUp(Total / Config[Limit]),
-
-            FirstData = ExtractData(FirstJson),
-
-            RemainingPageNumbers =
-                if PagesCount <= 1 then
-                    {}
-                else
-                    List.Numbers(2, PagesCount - 1),
-
-            RemainingPages =
-                List.Transform(
-                    RemainingPageNumbers,
-                    each GetPageData(_, FromDate, ToDate)
-                ),
-
-            PageDataLists = List.Combine({{FirstData}, RemainingPages}),
-            Records = List.Combine(PageDataLists)
-        in
-            Records,
-
-    DateRanges =
-        List.Buffer(
-            CreateDateRanges(
-                Config[StartDate],
-                Config[EndDate],
-                Config[DaysPerRange]
-            )
-        ),
-
-    RangeDataLists =
-        List.Transform(
-            DateRanges,
-            each GetRangeData(_[From], _[To])
-        ),
-
-    AllRecords = List.Combine(RangeDataLists),
-
-    Result =
-        Table.FromRecords(
-            AllRecords,
-            ResponseColumnNames,
-            MissingField.UseNull
-        ),
-
-    TypedResult =
-        Table.TransformColumnTypes(
-            Result,
-            {
-                {"assessment_type", type text},
-                {"assessment_slip_number", type text},
-                {"receipt_number", type text},
-                {"status", type text},
-                {"assessment_total_price_including_tax", Int64.Type},
-                {"store_id", Int64.Type},
-                {"name", type text},
-                {"name_kana", type text},
-                {"payment_type", type text},
-                {"bank_name", type text},
-                {"account_type", type text},
-                {"is_japan_post_bank", type logical},
-                {"branch_number", type text},
-                {"account_number", type text},
-                {"branch_and_account_number_of_japan_post_bank", type text},
-                {"assessment_confirmation_datetime", type datetime},
-                {"assessment_cancellation_datetime", type datetime}
-            }
-        )
+            List.Combine(AllPages),
+    DateRanges = List.Buffer(
+        CreateDateRanges(Config[StartDate], Config[EndDate], Config[DaysPerRange])
+    ),
+    AllRecords = List.Combine(
+        List.Transform(DateRanges, each FetchRange(_[From], _[To]))
+    ),
+    RawTable = Table.FromRecords(AllRecords, null, MissingField.UseNull)
 in
-    TypedResult
+    RawTable
+
+// Assessments_Transform
+let
+    Source = Assessments_Source,
+    Schema = {
+        {"assessment_type", "査定形態", type text},
+        {"assessment_slip_number", "査定伝票番号", Int64.Type},
+        {"receipt_number", "領収書番号", Int64.Type},
+        {"status", "査定ステータス", type text},
+        {"assessment_total_price_including_tax", "査定金額", Int64.Type},
+        {"store_id", "店舗ID", type text},
+        {"name", "申込者氏名", type text},
+        {"name_kana", "申込者カナ", type text},
+        {"payment_type", "支払種別", type text},
+        {"bank_name", "銀行支店", type text},
+        {"account_type", "口座種別", type text},
+        {"is_japan_post_bank", "ゆうちょ銀行区分", type logical},
+        {"branch_number", "支店番号", type text},
+        {"account_number", "口座番号", type text},
+        {"branch_and_account_number_of_japan_post_bank", "記号番号", type text},
+        {"assessment_confirmation_datetime", "買取確定日時", type datetime},
+        {"assessment_cancellation_datetime", "買取キャンセル日時", type datetime}
+    },
+    SourceColumns = List.Transform(Schema, each _{0}),
+    RenameMap = List.Transform(Schema, each {_{0}, _{1}}),
+    TypeMap = List.Transform(Schema, each {_{1}, _{2}}),
+    Selected = Table.SelectColumns(Source, SourceColumns, MissingField.UseNull),
+    Renamed = Table.RenameColumns(Selected, RenameMap),
+    Typed = Table.TransformColumnTypes(Renamed, TypeMap)
+in
+    Typed
+
+// AssessmentTypes
+let
+    Source = #table(
+        type table [assessment_type_en = text, assessment_type_ja = text],
+        {
+            {"BUSINESS_PURCHASES", "業者買取"},
+            {"EC_PURCHASES", "EC買取"},
+            {"HOME_DELIVERY_PURCHASES", "宅配買取"},
+            {"IN_STORE_PURCHASES", "店頭買取"},
+            {"ON_SITE_PURCHASES", "出張買取"}
+        }
+    )
+in
+    Source
+
+// AssessmentStatuses
+let
+    Source = #table(
+        type table [assessment_status_en = text, assessment_status_ja = text],
+        {
+            {"ASSESSMENT_COMPLETED", "査定完了"},
+            {"AWAITING_PACKING_MATERIAL_SHIPMENT", "梱包材発送待機"},
+            {"AWAITING_PICKUP_REQUEST", "集荷依頼待機"},
+            {"IN_STORE_APPLICATION_RECEPTION", "店頭申込受付"},
+            {"PHONE_APPLICATION_RECEPTION", "電話申込受付"},
+            {"PICKUP_ARRANGEMENT_COMPLETED", "集荷手配完了"},
+            {"POST_CONFIRMATION_CANCELLATION", "確定後キャンセル"},
+            {"PRE_CONFIRMATION_CANCELLATION", "確定前キャンセル"},
+            {"PURCHASE_CONFIRMED", "買取確定"},
+            {"SIGNATURE_RECEIVED", "サイン受領済"},
+            {"UNDER_ASSESSMENT", "査定中"},
+            {"WEB_APPLICATION_RECEPTION", "Web申込受付"}
+        }
+    )
+in
+    Source
+
+// Stores
+let
+    Source = #table(
+        type table [store_id = text, store_cd = Int64.Type],
+        {
+            {"2672db15-c643-4bb0-8296-98b9dd055e3e", 3},
+            {"46381554-e553-4793-9cab-7c6397fa18db", 4},
+            {"6c949a01-aa20-4875-8bbe-508f8e59a3c2", 5},
+            {"0a34e430-b01e-44af-810f-409cf6865ffe", 6},
+            {"0a88b577-6dcd-4cca-90a7-b1961b662653", 8},
+            {"e167ca85-183b-41db-83bf-e06d966b5f6b", 9},
+            {"075d24ae-e7c4-48ce-b4a5-05fbd8ea923a", 10},
+            {"cd1c42bb-711b-4ffa-a9a7-6688318180b2", 11},
+            {"94b225e5-4729-4d79-a96e-fc9b9ed08e6d", 12},
+            {"3c5963d8-c744-493b-94ac-d3e174381b1e", 20},
+            {"32867f6c-a5b8-4563-9990-b55e67b14bce", 84}
+        }
+    )
+in
+    Source
+
+// PaymentTypes
+let
+    Source = #table(
+        type table [payment_type_en = text, payment_type_ja = text],
+        {
+            {"CASH", "現金"},
+            {"BANK_TRANSFER", "振込"},
+            {"REGISTERED_MAIL", "書留"}
+        }
+    )
+in
+    Source
+
+// AccountTypes
+let
+    Source = #table(
+        type table [account_type_en = text, account_type_ja = text],
+        {
+            {"ORDINARY", "普通"},
+            {"PRESENT", "当座"}
+        }
+    )
+in
+    Source
