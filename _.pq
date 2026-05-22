@@ -1,3 +1,79 @@
+// Masters
+let
+    Definitions = [
+        AssessmentTypes = [
+            Columns = {
+                {"assessment_type_en", type text},
+                {"assessment_type_ja", type text}
+            },
+            Rows = {
+                {"BUSINESS_PURCHASES", "業者買取"},
+                {"EC_PURCHASES", "EC買取"},
+                {"HOME_DELIVERY_PURCHASES", "宅配買取"},
+                {"IN_STORE_PURCHASES", "店頭買取"},
+                {"ON_SITE_PURCHASES", "出張買取"}
+            }
+        ],
+        AssessmentStatuses = [
+            Columns = {
+                {"assessment_status_en", type text},
+                {"assessment_status_ja", type text}
+            },
+            Rows = {
+                {"ASSESSMENT_COMPLETED", "査定完了"},
+                {"AWAITING_PACKING_MATERIAL_SHIPMENT", "梱包材発送待機"},
+                {"AWAITING_PICKUP_REQUEST", "集荷依頼待機"},
+                {"IN_STORE_APPLICATION_RECEPTION", "店頭申込受付"},
+                {"PHONE_APPLICATION_RECEPTION", "電話申込受付"},
+                {"PICKUP_ARRANGEMENT_COMPLETED", "集荷手配完了"},
+                {"POST_CONFIRMATION_CANCELLATION", "確定後キャンセル"},
+                {"PRE_CONFIRMATION_CANCELLATION", "確定前キャンセル"},
+                {"PURCHASE_CONFIRMED", "買取確定"},
+                {"SIGNATURE_RECEIVED", "サイン受領済"},
+                {"UNDER_ASSESSMENT", "査定中"},
+                {"WEB_APPLICATION_RECEPTION", "Web申込受付"}
+            }
+        ],
+        PaymentTypes = [
+            Columns = {{"payment_type_en", type text}, {"payment_type_ja", type text}},
+            Rows = {{"CASH", "現金"}, {"BANK_TRANSFER", "振込"}, {"REGISTERED_MAIL", "書留"}}
+        ],
+        AccountTypes = [
+            Columns = {{"account_type_en", type text}, {"account_type_ja", type text}},
+            Rows = {{"ORDINARY", "普通"}, {"PRESENT", "当座"}}
+        ],
+        Stores = [
+            Columns = {{"store_id", type text}, {"store_cd", Int64.Type}},
+            Rows = {
+                {"2672db15-c643-4bb0-8296-98b9dd055e3e", 3},
+                {"46381554-e553-4793-9cab-7c6397fa18db", 4},
+                {"6c949a01-aa20-4875-8bbe-508f8e59a3c2", 5},
+                {"0a34e430-b01e-44af-810f-409cf6865ffe", 6},
+                {"0a88b577-6dcd-4cca-90a7-b1961b662653", 8},
+                {"e167ca85-183b-41db-83bf-e06d966b5f6b", 9},
+                {"075d24ae-e7c4-48ce-b4a5-05fbd8ea923a", 10},
+                {"cd1c42bb-711b-4ffa-a9a7-6688318180b2", 11},
+                {"94b225e5-4729-4d79-a96e-fc9b9ed08e6d", 12},
+                {"3c5963d8-c744-493b-94ac-d3e174381b1e", 20},
+                {"32867f6c-a5db-4563-9990-b55e67b14bce", 84}
+            }
+        ]
+    ],
+    BuildTable = (def as record) as table =>
+        let
+            ColNames = List.Transform(def[Columns], each _{0}),
+            TypeMap = List.Transform(def[Columns], each {_{0}, _{1}}),
+            Raw = #table(ColNames, def[Rows]),
+            Typed = Table.TransformColumnTypes(Raw, TypeMap)
+        in
+            Typed,
+    Result = Record.FromList(
+        List.Transform(Record.FieldValues(Definitions), BuildTable),
+        Record.FieldNames(Definitions)
+    )
+in
+    Result
+
 // Assessments_Source
 let
     Config = [
@@ -104,11 +180,11 @@ let
             values = Table.Column(table, columns{1})
         in
             Record.FromList(values, keys),
-    AssessmentTypeMap = ToLookup(AssessmentTypes),
-    AssessmentStatusMap = ToLookup(AssessmentStatuses),
-    PaymentTypeMap = ToLookup(PaymentTypes),
-    AccountTypeMap = ToLookup(AccountTypes),
-    StoreMap = ToLookup(Stores),
+    AssessmentTypeMap = ToLookup(Masters[AssessmentTypes]),
+    AssessmentStatusMap = ToLookup(Masters[AssessmentStatuses]),
+    PaymentTypeMap = ToLookup(Masters[PaymentTypes]),
+    AccountTypeMap = ToLookup(Masters[AccountTypes]),
+    StoreMap = ToLookup(Masters[Stores]),
     Schema = {
         {"assessment_type", "査定形態", type text, AssessmentTypeMap},
         {"assessment_slip_number", "査定伝票番号", Int64.Type, null},
@@ -130,6 +206,8 @@ let
     },
     SourceColumns = List.Transform(Schema, each _{0}),
     Selected = Table.SelectColumns(Source, SourceColumns, MissingField.UseNull),
+    StatusFilter = {"PURCHASE_CONFIRMED", "POST_CONFIRMATION_CANCELLATION"},
+    Filtered = Table.SelectRows(Selected, each List.Contains(StatusFilter, [status])),
     Transformations = List.Transform(
         List.Select(Schema, each _{3} <> null),
         (row) => {
@@ -142,7 +220,7 @@ let
         }
     ),
     Translated = Table.TransformColumns(
-        Selected,
+        Filtered,
         Transformations,
         null,
         MissingField.UseNull
@@ -154,85 +232,8 @@ let
 in
     Typed
 
-// AssessmentTypes
+// Assessments
 let
-    Source = #table(
-        type table [assessment_type_en = text, assessment_type_ja = text],
-        {
-            {"BUSINESS_PURCHASES", "業者買取"},
-            {"EC_PURCHASES", "EC買取"},
-            {"HOME_DELIVERY_PURCHASES", "宅配買取"},
-            {"IN_STORE_PURCHASES", "店頭買取"},
-            {"ON_SITE_PURCHASES", "出張買取"}
-        }
-    )
-in
-    Source
-
-// AssessmentStatuses
-let
-    Source = #table(
-        type table [assessment_status_en = text, assessment_status_ja = text],
-        {
-            {"ASSESSMENT_COMPLETED", "査定完了"},
-            {"AWAITING_PACKING_MATERIAL_SHIPMENT", "梱包材発送待機"},
-            {"AWAITING_PICKUP_REQUEST", "集荷依頼待機"},
-            {"IN_STORE_APPLICATION_RECEPTION", "店頭申込受付"},
-            {"PHONE_APPLICATION_RECEPTION", "電話申込受付"},
-            {"PICKUP_ARRANGEMENT_COMPLETED", "集荷手配完了"},
-            {"POST_CONFIRMATION_CANCELLATION", "確定後キャンセル"},
-            {"PRE_CONFIRMATION_CANCELLATION", "確定前キャンセル"},
-            {"PURCHASE_CONFIRMED", "買取確定"},
-            {"SIGNATURE_RECEIVED", "サイン受領済"},
-            {"UNDER_ASSESSMENT", "査定中"},
-            {"WEB_APPLICATION_RECEPTION", "Web申込受付"}
-        }
-    )
-in
-    Source
-
-// PaymentTypes
-let
-    Source = #table(
-        type table [payment_type_en = text, payment_type_ja = text],
-        {
-            {"CASH", "現金"},
-            {"BANK_TRANSFER", "振込"},
-            {"REGISTERED_MAIL", "書留"}
-        }
-    )
-in
-    Source
-
-// AccountTypes
-let
-    Source = #table(
-        type table [account_type_en = text, account_type_ja = text],
-        {
-            {"ORDINARY", "普通"},
-            {"PRESENT", "当座"}
-        }
-    )
-in
-    Source
-
-// Stores
-let
-    Source = #table(
-        type table [store_id = text, store_cd = Int64.Type],
-        {
-            {"2672db15-c643-4bb0-8296-98b9dd055e3e", 3},
-            {"46381554-e553-4793-9cab-7c6397fa18db", 4},
-            {"6c949a01-aa20-4875-8bbe-508f8e59a3c2", 5},
-            {"0a34e430-b01e-44af-810f-409cf6865ffe", 6},
-            {"0a88b577-6dcd-4cca-90a7-b1961b662653", 8},
-            {"e167ca85-183b-41db-83bf-e06d966b5f6b", 9},
-            {"075d24ae-e7c4-48ce-b4a5-05fbd8ea923a", 10},
-            {"cd1c42bb-711b-4ffa-a9a7-6688318180b2", 11},
-            {"94b225e5-4729-4d79-a96e-fc9b9ed08e6d", 12},
-            {"3c5963d8-c744-493b-94ac-d3e174381b1e", 20},
-            {"32867f6c-a5db-4563-9990-b55e67b14bce", 84}
-        }
-    )
+    Source = Assessments_Transform
 in
     Source
