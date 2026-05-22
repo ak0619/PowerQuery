@@ -58,9 +58,9 @@ let
                 Raw[Value],
     ExtractData = (json as record) as list =>
         let
-            val = try json[data] otherwise null
+            value = try json[data] otherwise null
         in
-            if val <> null and Value.Is(val, type list) then val else {},
+            if value <> null and Value.Is(value, type list) then value else {},
     ExtractTotal = (json as record) as number =>
         try Number.From(json[meta][total]) otherwise 0,
     FetchRange = (fromDate as date, toDate as date) as list =>
@@ -97,30 +97,59 @@ in
 // Assessments_Transform
 let
     Source = Assessments_Source,
+    ToLookup = (table as table) as record =>
+        let
+            columns = Table.ColumnNames(table),
+            keys = Table.Column(table, columns{0}),
+            values = Table.Column(table, columns{1})
+        in
+            Record.FromList(values, keys),
+    AssessmentTypeMap = ToLookup(AssessmentTypes),
+    AssessmentStatusMap = ToLookup(AssessmentStatuses),
+    PaymentTypeMap = ToLookup(PaymentTypes),
+    AccountTypeMap = ToLookup(AccountTypes),
+    StoreMap = ToLookup(Stores),
     Schema = {
-        {"assessment_type", "査定形態", type text},
-        {"assessment_slip_number", "査定伝票番号", Int64.Type},
-        {"receipt_number", "領収書番号", Int64.Type},
-        {"status", "査定ステータス", type text},
-        {"assessment_total_price_including_tax", "査定金額", Int64.Type},
-        {"store_id", "店舗ID", type text},
-        {"name", "申込者氏名", type text},
-        {"name_kana", "申込者カナ", type text},
-        {"payment_type", "支払種別", type text},
-        {"bank_name", "銀行支店", type text},
-        {"account_type", "口座種別", type text},
-        {"is_japan_post_bank", "ゆうちょ銀行区分", type logical},
-        {"branch_number", "支店番号", type text},
-        {"account_number", "口座番号", type text},
-        {"branch_and_account_number_of_japan_post_bank", "記号番号", type text},
-        {"assessment_confirmation_datetime", "買取確定日時", type datetime},
-        {"assessment_cancellation_datetime", "買取キャンセル日時", type datetime}
+        {"assessment_type", "査定形態", type text, AssessmentTypeMap},
+        {"assessment_slip_number", "査定伝票番号", Int64.Type, null},
+        {"receipt_number", "領収書番号", Int64.Type, null},
+        {"status", "査定ステータス", type text, AssessmentStatusMap},
+        {"assessment_total_price_including_tax", "査定金額", Int64.Type, null},
+        {"store_id", "店舗CD", Int64.Type, StoreMap},
+        {"name", "申込者氏名", type text, null},
+        {"name_kana", "申込者カナ", type text, null},
+        {"payment_type", "支払種別", type text, PaymentTypeMap},
+        {"bank_name", "銀行支店", type text, null},
+        {"account_type", "口座種別", type text, AccountTypeMap},
+        {"is_japan_post_bank", "ゆうちょ銀行区分", type logical, null},
+        {"branch_number", "支店番号", type text, null},
+        {"account_number", "口座番号", type text, null},
+        {"branch_and_account_number_of_japan_post_bank", "記号番号", type text, null},
+        {"assessment_confirmation_datetime", "買取確定日時", type datetime, null},
+        {"assessment_cancellation_datetime", "買取キャンセル日時", type datetime, null}
     },
     SourceColumns = List.Transform(Schema, each _{0}),
-    RenameMap = List.Transform(Schema, each {_{0}, _{1}}),
-    TypeMap = List.Transform(Schema, each {_{1}, _{2}}),
     Selected = Table.SelectColumns(Source, SourceColumns, MissingField.UseNull),
-    Renamed = Table.RenameColumns(Selected, RenameMap),
+    Transformations = List.Transform(
+        List.Select(Schema, each _{3} <> null),
+        (row) => {
+            row{0},
+            (value) =>
+                if value = null then
+                    null
+                else
+                    Record.FieldOrDefault(row{3}, value, value)
+        }
+    ),
+    Translated = Table.TransformColumns(
+        Selected,
+        Transformations,
+        null,
+        MissingField.UseNull
+    ),
+    RenameMap = List.Transform(Schema, each {_{0}, _{1}}),
+    Renamed = Table.RenameColumns(Translated, RenameMap),
+    TypeMap = List.Transform(Schema, each {_{1}, _{2}}),
     Typed = Table.TransformColumnTypes(Renamed, TypeMap)
 in
     Typed
@@ -162,27 +191,6 @@ let
 in
     Source
 
-// Stores
-let
-    Source = #table(
-        type table [store_id = text, store_cd = Int64.Type],
-        {
-            {"2672db15-c643-4bb0-8296-98b9dd055e3e", 3},
-            {"46381554-e553-4793-9cab-7c6397fa18db", 4},
-            {"6c949a01-aa20-4875-8bbe-508f8e59a3c2", 5},
-            {"0a34e430-b01e-44af-810f-409cf6865ffe", 6},
-            {"0a88b577-6dcd-4cca-90a7-b1961b662653", 8},
-            {"e167ca85-183b-41db-83bf-e06d966b5f6b", 9},
-            {"075d24ae-e7c4-48ce-b4a5-05fbd8ea923a", 10},
-            {"cd1c42bb-711b-4ffa-a9a7-6688318180b2", 11},
-            {"94b225e5-4729-4d79-a96e-fc9b9ed08e6d", 12},
-            {"3c5963d8-c744-493b-94ac-d3e174381b1e", 20},
-            {"32867f6c-a5b8-4563-9990-b55e67b14bce", 84}
-        }
-    )
-in
-    Source
-
 // PaymentTypes
 let
     Source = #table(
@@ -203,6 +211,27 @@ let
         {
             {"ORDINARY", "普通"},
             {"PRESENT", "当座"}
+        }
+    )
+in
+    Source
+
+// Stores
+let
+    Source = #table(
+        type table [store_id = text, store_cd = Int64.Type],
+        {
+            {"2672db15-c643-4bb0-8296-98b9dd055e3e", 3},
+            {"46381554-e553-4793-9cab-7c6397fa18db", 4},
+            {"6c949a01-aa20-4875-8bbe-508f8e59a3c2", 5},
+            {"0a34e430-b01e-44af-810f-409cf6865ffe", 6},
+            {"0a88b577-6dcd-4cca-90a7-b1961b662653", 8},
+            {"e167ca85-183b-41db-83bf-e06d966b5f6b", 9},
+            {"075d24ae-e7c4-48ce-b4a5-05fbd8ea923a", 10},
+            {"cd1c42bb-711b-4ffa-a9a7-6688318180b2", 11},
+            {"94b225e5-4729-4d79-a96e-fc9b9ed08e6d", 12},
+            {"3c5963d8-c744-493b-94ac-d3e174381b1e", 20},
+            {"32867f6c-a5db-4563-9990-b55e67b14bce", 84}
         }
     )
 in
