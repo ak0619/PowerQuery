@@ -208,9 +208,80 @@ let
             null
         else
             Text.Remove(Text.Clean(inputValue), {" ", "　", Character.FromNumber(160)}),
+    ConvertHalfWidthToFullWidth = (inputValue as nullable text) as nullable text =>
+        if inputValue = null or inputValue = "" then
+            inputValue
+        else
+            Text.Combine(
+                List.Transform(
+                    Text.ToList(inputValue),
+                    (ch) =>
+                        let
+                            code = Character.ToNumber(ch)
+                        in
+                            if code = 32 then
+                                Character.FromNumber(12288)
+                            else if code >= 33 and code <= 126 then
+                                Character.FromNumber(code + 65248)
+                            else
+                                ch
+                )
+            ),
     BankSuffixes = {"農業協同組合", "漁業協同組合", "信用金庫", "信用組合", "労働金庫", "信託銀行", "銀行"},
     BranchSuffixes = {"本店営業部", "出張所", "営業部", "支店", "支所", "本店"},
     KanjiDigits = {"〇", "一", "二", "三", "四", "五", "六", "七", "八", "九"},
+    FullWidthDigits = {"０", "１", "２", "３", "４", "５", "６", "７", "８", "９"},
+    JapanPostBankName = "ゆうちょ銀行",
+    SmallToLargeKana = {
+        {"ァ", "ア"},
+        {"ィ", "イ"},
+        {"ゥ", "ウ"},
+        {"ェ", "エ"},
+        {"ォ", "オ"},
+        {"ャ", "ヤ"},
+        {"ュ", "ユ"},
+        {"ョ", "ヨ"},
+        {"ッ", "ツ"}
+    },
+    LegalEntityAbbreviations = {
+        {"イリヨウホウジンシヤダン", "イ"},
+        {"イリヨウホウジンザイダン", "イ"},
+        {"シヤカイイリヨウホウジン", "イ"},
+        {"イリヨウホウジン", "イ"},
+        {"イツパンザイダンホウジン", "ザイ"},
+        {"コウエキザイダンホウジン", "ザイ"},
+        {"ザイダンホウジン", "ザイ"},
+        {"イツパンシヤダンホウジン", "シヤ"},
+        {"コウエキシヤダンホウジン", "シヤ"},
+        {"シヤダンホウジン", "シヤ"},
+        {"シユウキヨウホウジン", "シユウ"},
+        {"ガツコウホウジン", "ガク"},
+        {"シヤカイフクシホウジン", "フク"},
+        {"コウセイホゴホウジン", "ホゴ"},
+        {"トクテイヒエイリカツドウホウジン", "トクヒ"},
+        {"チホウドクリツギヨウセイホウジン", "チドク"},
+        {"ドクリツギヨウセイホウジン", "ドク"},
+        {"チユウキモクヒヨウカンリホウジン", "モク"},
+        {"コクリツケンキユウカイハツホウジン", "ケン"},
+        {"ギヨウセイシツコウホウジン", "シツ"},
+        {"ベンゴシホウジン", "ベン"},
+        {"ユウゲンセキニンチユウカンホウジン", "チユウ"},
+        {"ムゲンセキニンチユウカンホウジン", "チユウ"},
+        {"ギヨウセイシヨシホウジン", "ギヨ"},
+        {"シホウシヨシホウジン", "シホウ"},
+        {"ゼイリシホウジン", "ゼイ"},
+        {"コクリツダイガクホウジン", "ダイ"},
+        {"コウリツダイガクホウジン", "ダイ"},
+        {"ノウジクミアイホウジン", "ノウ"},
+        {"カンリクミアイホウジン", "カンリ"},
+        {"シヤカイホケンロウムシホウジン", "ロウム"},
+        {"カブシキガイシヤ", "カ"},
+        {"ユウゲンガイシヤ", "ユ"},
+        {"ゴウメイガイシヤ", "メ"},
+        {"ゴウシガイシヤ", "シ"},
+        {"ゴウドウガイシヤ", "ド"},
+        {"ソウゴガイシヤ", "ソ"}
+    },
     FindEarliestSuffix = (inputText as text, suffixes as list) as nullable record =>
         let
             matchedSuffixes = List.Select(
@@ -241,9 +312,75 @@ let
             )
         in
             earliestMatch,
-    DeriveJapanPostBranchName = (japanPostNumber as nullable text) as nullable text =>
-        if japanPostNumber = null or japanPostNumber = "" then
+    ConvertLegalEntityToAbbreviation = (inputValue as nullable text) as nullable text =>
+        if inputValue = null or inputValue = "" then
+            inputValue
+        else
+            let
+                normalized = List.Accumulate(
+                    SmallToLargeKana,
+                    inputValue,
+                    (state, pair) => Text.Replace(state, pair{0}, pair{1})
+                ),
+                matchedPair = List.First(
+                    List.Select(
+                        LegalEntityAbbreviations,
+                        (pair) => Text.Contains(normalized, pair{0})
+                    ),
+                    null
+                )
+            in
+                if matchedPair = null then
+                    inputValue
+                else
+                    let
+                        term = matchedPair{0},
+                        abbreviation = matchedPair{1},
+                        position = Text.PositionOf(normalized, term),
+                        termLength = Text.Length(term),
+                        before = Text.Start(inputValue, position),
+                        after = Text.Middle(inputValue, position + termLength),
+                        replaced =
+                            if position = 0 and after <> "" then
+                                abbreviation & "）" & after
+                            else if position = 0 and after = "" then
+                                "（" & abbreviation
+                            else if after = "" then
+                                before & "（" & abbreviation
+                            else
+                                before & "（" & abbreviation & "）" & after
+                    in
+                        replaced,
+    ConvertDigitsToKanji = (numericText as nullable text) as nullable text =>
+        if numericText = null or numericText = "" then
             null
+        else
+            Text.Combine(
+                List.Transform(
+                    Text.ToList(numericText),
+                    (digitCharacter) => KanjiDigits{Number.FromText(digitCharacter)}
+                )
+            ),
+    NormalizeToAsciiDigits = (inputText as nullable text) as nullable text =>
+        if inputText = null or inputText = "" then
+            null
+        else
+            let
+                kanjiNormalized = List.Accumulate(
+                    List.Positions(KanjiDigits),
+                    inputText,
+                    (state, i) => Text.Replace(state, KanjiDigits{i}, Text.From(i))
+                ),
+                fullWidthNormalized = List.Accumulate(
+                    List.Positions(FullWidthDigits),
+                    kanjiNormalized,
+                    (state, i) => Text.Replace(state, FullWidthDigits{i}, Text.From(i))
+                )
+            in
+                fullWidthNormalized,
+    ExtractJapanPostAccountFields = (japanPostNumber as nullable text) as record =>
+        if japanPostNumber = null or japanPostNumber = "" then
+            [支店番号 = null, 口座番号 = null]
         else
             let
                 digitsOnly = Text.Select(japanPostNumber, {"0" .. "9"}),
@@ -252,44 +389,128 @@ let
                         Text.Start(digitsOnly, 5)
                     else
                         null,
-                branchCode =
-                    if symbolDigits = null then
+                numberDigits =
+                    if symbolDigits <> null and Text.Length(digitsOnly) > 5 then
+                        Text.Middle(digitsOnly, 5)
+                    else
+                        null,
+                firstDigit =
+                    if symbolDigits <> null then
+                        Text.Start(symbolDigits, 1)
+                    else
+                        null,
+                isOrdinary = firstDigit = "1",
+                isCurrent = firstDigit = "0",
+                isValidPrefix = isOrdinary or isCurrent,
+                branchNumber =
+                    if symbolDigits = null or not isValidPrefix then
                         null
                     else
-                        let
-                            firstDigit = Text.Start(symbolDigits, 1),
-                            middleDigits = Text.Range(symbolDigits, 1, 2),
-                            suffixDigit = if firstDigit = "0" then "9" else "8"
-                        in
-                            middleDigits & suffixDigit,
-                branchName =
-                    if branchCode = null then
+                        Text.Range(symbolDigits, 1, 2)
+                            & (if isCurrent then "9" else "8"),
+                accountNumber =
+                    if numberDigits = null or numberDigits = "" or not isValidPrefix then
                         null
+                    else if isOrdinary and Text.End(numberDigits, 1) = "1" then
+                        Text.Start(numberDigits, Text.Length(numberDigits) - 1)
                     else
-                        Text.Combine(
-                            List.Transform(
-                                Text.ToList(branchCode),
-                                (digitCharacter) =>
-                                    KanjiDigits{Number.FromText(digitCharacter)}
-                            )
-                        )
+                        numberDigits
             in
-                branchName,
-    ExtractBankAndBranch = (
+                [支店番号 = branchNumber, 口座番号 = accountNumber],
+    ExtractBranchNumberFromText = (bankBranchText as nullable text) as nullable text =>
+        if bankBranchText = null or bankBranchText = "" then
+            null
+        else
+            let
+                afterBank =
+                    if Text.Contains(bankBranchText, JapanPostBankName) then
+                        Text.Middle(
+                            bankBranchText,
+                            Text.PositionOf(bankBranchText, JapanPostBankName)
+                                + Text.Length(JapanPostBankName)
+                        )
+                    else
+                        bankBranchText,
+                branchSuffixHit = FindEarliestSuffix(afterBank, BranchSuffixes),
+                beforeBranchSuffix =
+                    if branchSuffixHit = null then
+                        afterBank
+                    else
+                        Text.Start(afterBank, branchSuffixHit[Position]),
+                asciiNormalized = NormalizeToAsciiDigits(beforeBranchSuffix),
+                digitsOnly =
+                    if asciiNormalized = null then
+                        ""
+                    else
+                        Text.Select(asciiNormalized, {"0" .. "9"}),
+                lastThree =
+                    if Text.Length(digitsOnly) >= 3 then
+                        Text.End(digitsOnly, 3)
+                    else
+                        null
+            in
+                lastThree,
+    ValidateBranchNumber = (branchNumber as nullable text, accountType as nullable text) as nullable text =>
+        if branchNumber = null or branchNumber = "" then
+            null
+        else
+            let
+                digitsOnly = Text.Select(Text.From(branchNumber), {"0" .. "9"}),
+                expectedSuffix =
+                    if accountType <> null and Text.Contains(accountType, "普通") then
+                        "8"
+                    else if accountType <> null and Text.Contains(accountType, "当座") then
+                        "9"
+                    else
+                        null,
+                isThreeDigits = Text.Length(digitsOnly) = 3,
+                hasExpectedSuffix = expectedSuffix
+                    <> null
+                    and Text.End(digitsOnly, 1) = expectedSuffix
+            in
+                if isThreeDigits and hasExpectedSuffix then digitsOnly else null,
+    CoalesceFirstNonNull = (candidates as list) as nullable text =>
+        List.First(List.Select(candidates, each _ <> null), null),
+    ExtractBankBranchAndAccount = (
         bankBranchText as nullable text,
         isJapanPostBank as nullable logical,
-        japanPostNumber as nullable text
+        japanPostNumber as nullable text,
+        accountType as nullable text,
+        originalBranchNumber as nullable text,
+        originalAccountNumber as nullable text
     ) as record =>
         let
+            isJapanPostByName = bankBranchText
+                <> null
+                and Text.Contains(bankBranchText, JapanPostBankName),
             baseResult =
                 if bankBranchText = null or bankBranchText = "" then
-                    [銀行名 = null, 支店名 = null]
+                    [金融機関名 = null, 支店名 = null]
+                else if isJapanPostByName then
+                    let
+                        japanPostPos = Text.PositionOf(
+                            bankBranchText,
+                            JapanPostBankName
+                        ),
+                        bankNameEnd = japanPostPos + Text.Length(JapanPostBankName),
+                        remainder = Text.Middle(bankBranchText, bankNameEnd),
+                        branchSuffixHit = FindEarliestSuffix(remainder, BranchSuffixes),
+                        branchName =
+                            if branchSuffixHit = null then
+                                if remainder = "" then null else remainder
+                            else
+                                Text.Start(
+                                    remainder,
+                                    branchSuffixHit[Position] + branchSuffixHit[Length]
+                                )
+                    in
+                        [金融機関名 = JapanPostBankName, 支店名 = branchName]
                 else
                     let
                         bankSuffixHit = FindEarliestSuffix(bankBranchText, BankSuffixes)
                     in
                         if bankSuffixHit = null then
-                            [銀行名 = null, 支店名 = null]
+                            [金融機関名 = null, 支店名 = null]
                         else
                             let
                                 bankNameEnd = bankSuffixHit[Position]
@@ -310,37 +531,64 @@ let
                                                 + branchSuffixHit[Length]
                                         )
                             in
-                                [銀行名 = bankName, 支店名 = branchName],
+                                [金融機関名 = bankName, 支店名 = branchName],
             needsJapanPostFallback = isJapanPostBank
                 = true
                 and (
-                    baseResult[銀行名]
+                    baseResult[金融機関名]
                         = null
-                        or not Text.Contains(baseResult[銀行名], "ゆうちょ銀行")
+                        or not Text.Contains(baseResult[金融機関名], JapanPostBankName)
                 ),
             afterJapanPostFix =
                 if needsJapanPostFallback then
-                    [銀行名 = "ゆうちょ銀行", 支店名 = baseResult[支店名]]
+                    [金融機関名 = JapanPostBankName, 支店名 = baseResult[支店名]]
                 else
                     baseResult,
-            isJapanPost = afterJapanPostFix[銀行名]
+            isJapanPost = afterJapanPostFix[金融機関名]
                 <> null
-                and Text.Contains(afterJapanPostFix[銀行名], "ゆうちょ銀行"),
-            derivedBranchName =
-                if isJapanPost and afterJapanPostFix[支店名] = null then
-                    DeriveJapanPostBranchName(japanPostNumber)
+                and Text.Contains(afterJapanPostFix[金融機関名], JapanPostBankName),
+            japanPostExtract =
+                if isJapanPost then
+                    ExtractJapanPostAccountFields(japanPostNumber)
+                else
+                    [支店番号 = null, 口座番号 = null],
+            branchCandidates =
+                if isJapanPost then
+                    {
+                        ValidateBranchNumber(japanPostExtract[支店番号], accountType),
+                        ValidateBranchNumber(
+                            ExtractBranchNumberFromText(bankBranchText),
+                            accountType
+                        ),
+                        ValidateBranchNumber(originalBranchNumber, accountType)
+                    }
+                else
+                    {},
+            finalBranchNumber =
+                if isJapanPost then
+                    CoalesceFirstNonNull(branchCandidates)
+                else
+                    originalBranchNumber,
+            finalBranchName =
+                if isJapanPost then
+                    if finalBranchNumber <> null then
+                        ConvertDigitsToKanji(finalBranchNumber)
+                    else
+                        null
                 else
                     afterJapanPostFix[支店名],
-            finalBranchName =
-                if isJapanPost
-                    and derivedBranchName <> null
-                    and Text.EndsWith(derivedBranchName, "支店")
-                then
-                    Text.Start(derivedBranchName, Text.Length(derivedBranchName) - 2)
+            finalAccountNumber =
+                if isJapanPost and japanPostExtract[口座番号] <> null then
+                    japanPostExtract[口座番号]
                 else
-                    derivedBranchName
+                    originalAccountNumber
         in
-            [銀行名 = afterJapanPostFix[銀行名], 支店名 = finalBranchName],
+            [
+                金融機関名 = afterJapanPostFix[金融機関名],
+                支店名 = finalBranchName,
+                支店番号 = finalBranchNumber,
+                口座番号 = finalAccountNumber
+            ],
     AssessmentTypeLookup = BuildLookupRecord(Masters[AssessmentTypes]),
     AssessmentStatusLookup = BuildLookupRecord(Masters[AssessmentStatuses]),
     PaymentTypeLookup = BuildLookupRecord(Masters[PaymentTypes]),
@@ -401,7 +649,7 @@ let
             DestinationColumn = "申込者カナ",
             ColumnType = type text,
             Lookup = null,
-            Normalizer = null
+            Normalizer = ConvertLegalEntityToAbbreviation
         ],
         [
             SourceColumn = "payment_type",
@@ -412,7 +660,7 @@ let
         ],
         [
             SourceColumn = "bank_name",
-            DestinationColumn = "金融機関",
+            DestinationColumn = "備考",
             ColumnType = type text,
             Lookup = null,
             Normalizer = StripSpacesAndControl
@@ -461,7 +709,7 @@ let
         ],
         [
             SourceColumn = "assessment_cancellation_datetime",
-            DestinationColumn = "買取キャンセル日時",
+            DestinationColumn = "キャンセル日時",
             ColumnType = type datetime,
             Lookup = null,
             Normalizer = null
@@ -519,20 +767,68 @@ let
     TableWithBankBranchSplit = Table.AddColumn(
         TypedTable,
         "_BankBranchSplit",
-        each ExtractBankAndBranch([金融機関], [ゆうちょ銀行区分], [記号番号]),
+        each ExtractBankBranchAndAccount(
+            [備考],
+            [ゆうちょ銀行区分],
+            [記号番号],
+            [口座種別],
+            [支店番号],
+            [口座番号]
+        ),
         type record
     ),
-    ExpandedTable = Table.ExpandRecordColumn(
+    RemovedOverwrittenColumns = Table.RemoveColumns(
         TableWithBankBranchSplit,
+        {"支店番号", "口座番号"}
+    ),
+    ExpandedTable = Table.ExpandRecordColumn(
+        RemovedOverwrittenColumns,
         "_BankBranchSplit",
-        {"銀行名", "支店名"},
-        {"銀行名", "支店名"}
+        {"金融機関名", "支店名", "支店番号", "口座番号"},
+        {"金融機関名", "支店名", "支店番号", "口座番号"}
+    ),
+    NormalizedBankFields = Table.TransformColumns(
+        ExpandedTable,
+        {
+            {"金融機関名", ConvertHalfWidthToFullWidth, type nullable text},
+            {"支店名", ConvertHalfWidthToFullWidth, type nullable text}
+        },
+        null,
+        MissingField.UseNull
+    ),
+    ReorderedTable = Table.ReorderColumns(
+        NormalizedBankFields,
+        List.Transform(ColumnSchema, each [DestinationColumn]) & {"金融機関名", "支店名"}
     )
 in
-    ExpandedTable
+    ReorderedTable
 
 // Assessments
 let
-    Source = Assessments_Transform
+    Source = Assessments_Transform,
+    SelectedColumnsTable = Table.SelectColumns(
+        Source,
+        {
+            "買取確定日時",
+            "キャンセル日時",
+            "店舗CD",
+            "査定伝票番号",
+            "領収書番号",
+            "査定形態",
+            "査定ステータス",
+            "査定金額",
+            "申込者氏名",
+            "申込者カナ",
+            "支払種別",
+            "金融機関名",
+            "支店名",
+            "支店番号",
+            "口座種別",
+            "口座番号",
+            "記号番号",
+            "備考"
+        },
+        MissingField.UseNull
+    )
 in
-    Source
+    SelectedColumnsTable
