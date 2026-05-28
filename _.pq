@@ -2,10 +2,7 @@
 let
     TableDefinitions = [
         AssessmentTypes = [
-            Columns = {
-                {"assessment_type_en", type text},
-                {"assessment_type_ja", type text}
-            },
+            Columns = {{"Code", type text}, {"Label", type text}},
             Rows = {
                 {"BUSINESS_PURCHASES", "業者買取"},
                 {"EC_PURCHASES", "EC買取"},
@@ -15,10 +12,7 @@ let
             }
         ],
         AssessmentStatuses = [
-            Columns = {
-                {"assessment_status_en", type text},
-                {"assessment_status_ja", type text}
-            },
+            Columns = {{"Code", type text}, {"Label", type text}},
             Rows = {
                 {"ASSESSMENT_COMPLETED", "査定完了"},
                 {"AWAITING_PACKING_MATERIAL_SHIPMENT", "梱包材発送待機"},
@@ -35,15 +29,15 @@ let
             }
         ],
         PaymentTypes = [
-            Columns = {{"payment_type_en", type text}, {"payment_type_ja", type text}},
+            Columns = {{"Code", type text}, {"Label", type text}},
             Rows = {{"CASH", "現金"}, {"BANK_TRANSFER", "振込"}, {"REGISTERED_MAIL", "書留"}}
         ],
         AccountTypes = [
-            Columns = {{"account_type_en", type text}, {"account_type_ja", type text}},
+            Columns = {{"Code", type text}, {"Label", type text}},
             Rows = {{"ORDINARY", "普通"}, {"PRESENT", "当座"}}
         ],
         Stores = [
-            Columns = {{"store_id", type text}, {"store_cd", Int64.Type}},
+            Columns = {{"StoreId", type text}, {"StoreCode", Int64.Type}},
             Rows = {
                 {"2672db15-c643-4bb0-8296-98b9dd055e3e", 3},
                 {"46381554-e553-4793-9cab-7c6397fa18db", 4},
@@ -74,13 +68,12 @@ let
 in
     MasterTables
 
-// Assessments_Source
+// AssessmentsSource
 let
     Configuration = [
         BaseUrl = "https://api.reuse.ishibashi.co.jp",
         Endpoint = "api/v1/admin/assessments/",
         ApiKey = ApiKeyParameter,
-        // FromDate = Date.AddMonths(Date.From(DateTime.LocalNow()), - 1),
         FromDate = #date(2025, 11, 1),
         ToDate = Date.AddDays(Date.From(DateTime.LocalNow()), 1),
         DaysPerRange = 7,
@@ -193,9 +186,9 @@ let
 in
     RawTable
 
-// Assessments_Transform
+// AssessmentsTransform
 let
-    Source = Assessments_Source,
+    Source = AssessmentsSource,
     BuildLookupRecord = (lookupTable as table) as record =>
         let
             columnNames = Table.ColumnNames(lookupTable),
@@ -215,16 +208,16 @@ let
             Text.Combine(
                 List.Transform(
                     Text.ToList(inputValue),
-                    (ch) =>
+                    (character) =>
                         let
-                            code = Character.ToNumber(ch)
+                            code = Character.ToNumber(character)
                         in
                             if code = 32 then
                                 Character.FromNumber(12288)
                             else if code >= 33 and code <= 126 then
                                 Character.FromNumber(code + 65248)
                             else
-                                ch
+                                character
                 )
             ),
     BankSuffixes = {"農業協同組合", "漁業協同組合", "信用金庫", "信用組合", "労働金庫", "信託銀行", "銀行"},
@@ -369,12 +362,14 @@ let
                 kanjiNormalized = List.Accumulate(
                     List.Positions(KanjiDigits),
                     inputText,
-                    (state, i) => Text.Replace(state, KanjiDigits{i}, Text.From(i))
+                    (state, index) =>
+                        Text.Replace(state, KanjiDigits{index}, Text.From(index))
                 ),
                 fullWidthNormalized = List.Accumulate(
                     List.Positions(FullWidthDigits),
                     kanjiNormalized,
-                    (state, i) => Text.Replace(state, FullWidthDigits{i}, Text.From(i))
+                    (state, index) =>
+                        Text.Replace(state, FullWidthDigits{index}, Text.From(index))
                 )
             in
                 fullWidthNormalized,
@@ -766,7 +761,7 @@ let
     ),
     TableWithBankBranchSplit = Table.AddColumn(
         TypedTable,
-        "_BankBranchSplit",
+        "BankBranchSplit",
         each ExtractBankBranchAndAccount(
             [備考],
             [ゆうちょ銀行区分],
@@ -783,7 +778,7 @@ let
     ),
     ExpandedTable = Table.ExpandRecordColumn(
         RemovedOverwrittenColumns,
-        "_BankBranchSplit",
+        "BankBranchSplit",
         {"金融機関名", "支店名", "支店番号", "口座番号"},
         {"金融機関名", "支店名", "支店番号", "口座番号"}
     ),
@@ -805,7 +800,7 @@ in
 
 // Assessments
 let
-    Source = Assessments_Transform,
+    Source = AssessmentsTransform,
     SelectedColumnsTable = Table.SelectColumns(
         Source,
         {
