@@ -71,7 +71,7 @@ in
 // BankAccountExtraction
 let
     BankSuffixes = {"農業協同組合", "漁業協同組合", "信用金庫", "信用組合", "労働金庫", "信託銀行", "銀行"},
-    BranchSuffixes = {"本店営業部", "出張所", "営業部", "支店", "支所", "本店"},
+    BranchSuffixes = {"本店営業部", "出張所", "営業部", "代理店", "支店", "支所", "本店"},
     KanjiDigits = {"〇", "一", "二", "三", "四", "五", "六", "七", "八", "九"},
     FullWidthDigits = {"０", "１", "２", "３", "４", "５", "６", "７", "８", "９"},
     JapanPostBankName = "ゆうちょ銀行",
@@ -475,7 +475,7 @@ let
         BaseUrl = "https://api.reuse.ishibashi.co.jp",
         Endpoint = "api/v1/admin/assessments/",
         ApiKey = ApiKeyParameter,
-        FromDate = #date(2025, 11, 1),
+        FromDate = Date.AddMonths(Date.From(DateTime.LocalNow()), -1),
         ToDate = Date.AddDays(Date.From(DateTime.LocalNow()), 1),
         DaysPerRange = 7,
         PageSize = 1000,
@@ -811,11 +811,11 @@ let
 in
     ReorderedTable
 
-// Assessments
+// AssessmentsExistingSource
 let
-    Source = AssessmentsTransform,
-    SelectedColumnsTable = Table.SelectColumns(
-        Source,
+    TargetTableName = "Assessments",
+    SchemaTemplate = Table.SelectColumns(
+        AssessmentsTransform,
         {
             "買取確定日時",
             "キャンセル日時",
@@ -839,6 +839,82 @@ let
             "備考"
         },
         MissingField.UseNull
-    )
+    ),
+    EmptyTable = #table(Table.ColumnNames(SchemaTemplate), {}),
+    RawTable = try
+        Excel.CurrentWorkbook(){[Name = TargetTableName]}[Content]
+    otherwise
+        EmptyTable
 in
-    SelectedColumnsTable
+    RawTable
+
+// AssessmentsExistingTransform
+let
+    Source = AssessmentsExistingSource,
+    ColumnTypeMap = {
+        {"買取確定日時", type datetime},
+        {"キャンセル日時", type datetime},
+        {"店舗CD", Int64.Type},
+        {"査定伝票番号", Int64.Type},
+        {"領収書番号", Int64.Type},
+        {"査定形態", type text},
+        {"査定ステータス", type text},
+        {"査定金額", Int64.Type},
+        {"申込者氏名", type text},
+        {"申込者カナ", type text},
+        {"支払種別", type text},
+        {"出金取引ID", Int64.Type},
+        {"入金取引ID", Int64.Type},
+        {"金融機関名", type text},
+        {"支店名", type text},
+        {"支店番号", type text},
+        {"口座種別", type text},
+        {"口座番号", type text},
+        {"記号番号", type text},
+        {"備考", type text}
+    },
+    TypedTable = Table.TransformColumnTypes(Source, ColumnTypeMap)
+in
+    TypedTable
+
+// Assessments
+let
+    NewAssessments = Table.SelectColumns(
+        AssessmentsTransform,
+        {
+            "買取確定日時",
+            "キャンセル日時",
+            "店舗CD",
+            "査定伝票番号",
+            "領収書番号",
+            "査定形態",
+            "査定ステータス",
+            "査定金額",
+            "申込者氏名",
+            "申込者カナ",
+            "支払種別",
+            "出金取引ID",
+            "入金取引ID",
+            "金融機関名",
+            "支店名",
+            "支店番号",
+            "口座種別",
+            "口座番号",
+            "記号番号",
+            "備考"
+        },
+        MissingField.UseNull
+    ),
+    ExistingAssessments = AssessmentsExistingTransform,
+    RetainedExistingJoined = Table.NestedJoin(
+        ExistingAssessments,
+        {"査定伝票番号"},
+        NewAssessments,
+        {"査定伝票番号"},
+        "MatchedRows",
+        JoinKind.LeftAnti
+    ),
+    RetainedExisting = Table.RemoveColumns(RetainedExistingJoined, {"MatchedRows"}),
+    CombinedTable = Table.Combine({RetainedExisting, NewAssessments})
+in
+    CombinedTable
