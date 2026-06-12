@@ -120,11 +120,107 @@ let
         {"ゴウドウガイシヤ", "ド"},
         {"ソウゴガイシヤ", "ソ"}
     },
+    FullWidthToHalfWidthKanaMap = {
+        {"ガ", "ｶﾞ"},
+        {"ギ", "ｷﾞ"},
+        {"グ", "ｸﾞ"},
+        {"ゲ", "ｹﾞ"},
+        {"ゴ", "ｺﾞ"},
+        {"ザ", "ｻﾞ"},
+        {"ジ", "ｼﾞ"},
+        {"ズ", "ｽﾞ"},
+        {"ゼ", "ｾﾞ"},
+        {"ゾ", "ｿﾞ"},
+        {"ダ", "ﾀﾞ"},
+        {"ヂ", "ﾁﾞ"},
+        {"ヅ", "ﾂﾞ"},
+        {"デ", "ﾃﾞ"},
+        {"ド", "ﾄﾞ"},
+        {"バ", "ﾊﾞ"},
+        {"ビ", "ﾋﾞ"},
+        {"ブ", "ﾌﾞ"},
+        {"ベ", "ﾍﾞ"},
+        {"ボ", "ﾎﾞ"},
+        {"パ", "ﾊﾟ"},
+        {"ピ", "ﾋﾟ"},
+        {"プ", "ﾌﾟ"},
+        {"ペ", "ﾍﾟ"},
+        {"ポ", "ﾎﾟ"},
+        {"ヴ", "ｳﾞ"},
+        {"ア", "ｱ"},
+        {"イ", "ｲ"},
+        {"ウ", "ｳ"},
+        {"エ", "ｴ"},
+        {"オ", "ｵ"},
+        {"カ", "ｶ"},
+        {"キ", "ｷ"},
+        {"ク", "ｸ"},
+        {"ケ", "ｹ"},
+        {"コ", "ｺ"},
+        {"サ", "ｻ"},
+        {"シ", "ｼ"},
+        {"ス", "ｽ"},
+        {"セ", "ｾ"},
+        {"ソ", "ｿ"},
+        {"タ", "ﾀ"},
+        {"チ", "ﾁ"},
+        {"ツ", "ﾂ"},
+        {"テ", "ﾃ"},
+        {"ト", "ﾄ"},
+        {"ナ", "ﾅ"},
+        {"ニ", "ﾆ"},
+        {"ヌ", "ﾇ"},
+        {"ネ", "ﾈ"},
+        {"ノ", "ﾉ"},
+        {"ハ", "ﾊ"},
+        {"ヒ", "ﾋ"},
+        {"フ", "ﾌ"},
+        {"ヘ", "ﾍ"},
+        {"ホ", "ﾎ"},
+        {"マ", "ﾏ"},
+        {"ミ", "ﾐ"},
+        {"ム", "ﾑ"},
+        {"メ", "ﾒ"},
+        {"モ", "ﾓ"},
+        {"ヤ", "ﾔ"},
+        {"ユ", "ﾕ"},
+        {"ヨ", "ﾖ"},
+        {"ラ", "ﾗ"},
+        {"リ", "ﾘ"},
+        {"ル", "ﾙ"},
+        {"レ", "ﾚ"},
+        {"ロ", "ﾛ"},
+        {"ワ", "ﾜ"},
+        {"ヲ", "ｦ"},
+        {"ン", "ﾝ"},
+        {"ァ", "ｧ"},
+        {"ィ", "ｨ"},
+        {"ゥ", "ｩ"},
+        {"ェ", "ｪ"},
+        {"ォ", "ｫ"},
+        {"ャ", "ｬ"},
+        {"ュ", "ｭ"},
+        {"ョ", "ｮ"},
+        {"ッ", "ｯ"},
+        {"ー", "-"},
+        {"・", "."},
+        {"（", "("},
+        {"）", ")"},
+        {"．", "."},
+        {"，", ","},
+        {"／", "/"},
+        {"゛", "ﾞ"},
+        {"゜", "ﾟ"},
+        {"　", " "}
+    },
     StripSpacesAndControl = (inputValue as nullable text) as nullable text =>
         if inputValue = null then
             null
         else
-            Text.Remove(Text.Clean(inputValue), {" ", "　", Character.FromNumber(160)}),
+            Text.Remove(
+                Text.Clean(inputValue),
+                {" ", "　", Character.FromNumber(160)}
+            ),
     ConvertLegalEntityToAbbreviation = (inputValue as nullable text) as nullable text =>
         if inputValue = null or inputValue = "" then
             inputValue
@@ -163,11 +259,38 @@ let
                             else
                                 before & "（" & abbreviation & "）" & after
                     in
-                        replaced
+                        replaced,
+    ConvertFullWidthKanaToHalfWidth = (inputValue as nullable text) as nullable text =>
+        if inputValue = null or inputValue = "" then
+            inputValue
+        else
+            let
+                kanaReplaced = List.Accumulate(
+                    FullWidthToHalfWidthKanaMap,
+                    inputValue,
+                    (state, pair) => Text.Replace(state, pair{0}, pair{1})
+                ),
+                alphanumericReplaced = Text.Combine(
+                    List.Transform(
+                        Text.ToList(kanaReplaced),
+                        (character) =>
+                            let
+                                code = Character.ToNumber(character)
+                            in
+                                if code >= 65281 and code <= 65374 then
+                                    Character.FromNumber(code - 65248)
+                                else
+                                    character
+                    )
+                ),
+                upperCased = Text.Upper(alphanumericReplaced)
+            in
+                upperCased
 in
     [
         StripSpacesAndControl = StripSpacesAndControl,
-        ConvertLegalEntityToAbbreviation = ConvertLegalEntityToAbbreviation
+        ConvertLegalEntityToAbbreviation = ConvertLegalEntityToAbbreviation,
+        ConvertFullWidthKanaToHalfWidth = ConvertFullWidthKanaToHalfWidth
     ]
 
 // BankAccountExtraction
@@ -1651,3 +1774,89 @@ let
     )
 in
     CombinedTable
+
+// TransferSchedulesCsv
+// TransferSchedulesCsv
+let
+    Configuration = [
+        ConsignorCode = "7955197000",
+        ConsignorName = "ｶ)ｲｼﾊﾞｼｶﾞﾂｷﾃﾝ",
+        TransferDate = Date.AddDays(Date.From(DateTime.LocalNow()), 1),
+        OriginBranchNumber = "013",
+        OriginAccountType = "1",
+        OriginAccountNumber = "0258276"
+    ],
+    AccountTypeCodeMap = [#"普通" = "1", #"当座" = "2", #"貯蓄" = "4"],
+    FieldCount = 16,
+    FieldNames = List.Transform(
+        {1 .. FieldCount},
+        each "F" & Text.PadStart(Text.From(_), 2, "0")
+    ),
+    EmptyTemplate = Record.FromList(List.Repeat({""}, FieldCount), FieldNames),
+    PadLeftWithZero = (inputValue as nullable text, length as number) as text =>
+        if inputValue = null or inputValue = "" then
+            Text.Repeat("0", length)
+        else
+            Text.PadStart(inputValue, length, "0"),
+    ConvertKana = TextNormalizers[ConvertFullWidthKanaToHalfWidth],
+    Source = TransferSchedulesExisting,
+    HeaderRecord = Record.Combine(
+        {
+            EmptyTemplate,
+            [
+                F01 = "1",
+                F02 = "21",
+                F03 = "0",
+                F04 = Configuration[ConsignorCode],
+                F05 = Configuration[ConsignorName],
+                F06 = Date.ToText(Configuration[TransferDate], "MMdd"),
+                F07 = "0137",
+                F09 = Configuration[OriginBranchNumber],
+                F11 = Configuration[OriginAccountType],
+                F12 = Configuration[OriginAccountNumber]
+            ]
+        }
+    ),
+    BuildDataRecord = (sourceRow as record) as record =>
+        Record.Combine(
+            {
+                EmptyTemplate,
+                [
+                    F01 = "2",
+                    F02 = PadLeftWithZero(sourceRow[金融機関番号], 4),
+                    F04 = PadLeftWithZero(sourceRow[支店番号1], 3),
+                    F07 = Record.FieldOrDefault(
+                        AccountTypeCodeMap,
+                        sourceRow[口座種別],
+                        "1"
+                    ),
+                    F08 = PadLeftWithZero(sourceRow[口座番号], 7),
+                    F09 = ConvertKana(sourceRow[申込者カナ]),
+                    F10 = Text.From(sourceRow[査定金額]),
+                    F12 = PadLeftWithZero(Text.From(sourceRow[査定伝票番号]), 10)
+                ]
+            }
+        ),
+    DataRecords = List.Transform(Table.ToRecords(Source), BuildDataRecord),
+    DetailCount = List.Count(DataRecords),
+    TotalAmount = List.Sum(Table.Column(Source, "査定金額")),
+    NormalizedTotalAmount = if TotalAmount = null then 0 else TotalAmount,
+    TrailerRecord = Record.Combine(
+        {
+            EmptyTemplate,
+            [
+                F01 = "8",
+                F02 = Text.From(DetailCount),
+                F03 = Text.From(NormalizedTotalAmount)
+            ]
+        }
+    ),
+    EndRecord = Record.Combine({EmptyTemplate, [F01 = "9"]}),
+    AllRecords = {HeaderRecord} & DataRecords & {TrailerRecord, EndRecord},
+    ResultTable = Table.FromRecords(AllRecords),
+    TypedTable = Table.TransformColumnTypes(
+        ResultTable,
+        List.Transform(FieldNames, each {_, type text})
+    )
+in
+    TypedTable
