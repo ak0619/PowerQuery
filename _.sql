@@ -1,7 +1,7 @@
 SET NOCOUNT ON;
 
-DECLARE @DateFrom CHAR(8) = '20260601';
-DECLARE @DateTo CHAR(8) = '20260831';
+DECLARE @DateFrom char(8) = '20260601';
+DECLARE @DateTo   char(8) = '20260831';
 
 DROP TABLE IF EXISTS #Sales;
 DROP TABLE IF EXISTS #TargetTransaction;
