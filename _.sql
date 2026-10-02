@@ -88,20 +88,20 @@ sales as (
 
 imported_sales as (
     select
-        slip_date,
-        slip_number,
-        store_code,
+        source.slip_date,
+        source.slip_number,
+        source.store_code,
         N'取込売上' as section_name,
         N'レゾン' as staff_name,
         N'銀行振込' as payment_method,
-        payment_number,
-        order_number,
-        payment_amount
+        source.payment_number,
+        source.order_number,
+        source.payment_amount
     from
-        imported_source
+        imported_source as source
     where
-        slip_date >= @date_from
-        and slip_date <= @date_to
+        source.slip_date >= @date_from
+        and source.slip_date <= @date_to
 )
 
 select *
