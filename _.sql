@@ -1,5 +1,5 @@
-declare @date_from char(8) = '20260801';
-declare @date_to char(8) = '20260831';
+declare @date_from char(8) = N'20260901';
+declare @date_to char(8) = N'20260930';
 with
 sales_source as (
     select
@@ -48,7 +48,8 @@ imported_source as (
         [伝票番号] as slip_number,
         [顧客番号] as order_number,
         [決済番号] as payment_number,
-        [支払金額] as payment_amount
+        [支払金額] as payment_amount,
+        [作成ＰＧＭ] as creation_program
     from
         dbo.APV_RT_SALES_PAYMENT
 ),
@@ -60,14 +61,14 @@ sales as (
         source.transaction_type,
         source.creation_program,
         case source.creation_program
-            when 'TFO300E' then source.remarks
+            when N'TFO300E' then source.remarks
             else source.slip_number
         end as slip_number,
         case source.creation_program
-            when 'TFO300E' then N'スマレジ'
+            when N'TFO300E' then N'スマレジ'
             else sections.section_name
         end as section_name,
-        replace(staff.staff_name, N'　', '') as staff_name
+        replace(staff.staff_name, N'　', N'') as staff_name
     from
         sales_source as source
     inner join sales_rows as detail
@@ -82,8 +83,8 @@ sales as (
         source.sales_amount <> 0
         and source.processing_date >= @date_from
         and source.processing_date <= @date_to
-        and source.remarks not in ('66307', '66317')
-        and source.creation_program <> 'TFT220E'
+        and source.remarks not in (N'66307', N'66317')
+        and source.creation_program <> N'TFT220E'
 ),
 
 imported_sales as (
@@ -100,7 +101,8 @@ imported_sales as (
     from
         imported_source as source
     where
-        source.slip_date >= @date_from
+        source.creation_program = N'TFT220E'
+        and source.slip_date >= @date_from
         and source.slip_date <= @date_to
 )
 
