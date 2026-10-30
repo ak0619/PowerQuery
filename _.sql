@@ -1,7 +1,7 @@
 declare @date_from_compact char(8) = '20260901';
-declare @date_to_compact char(8) = '20260930';
+declare @date_to_exclusive_compact char(8) = '20261001';
 declare @date_from_hyphen char(10) = '2026-09-01';
-declare @date_to_hyphen char(10) = '2026-09-30';
+declare @date_to_exclusive_hyphen char(10) = '2026-10-01';
 
 with
 ne_source as (
@@ -76,9 +76,8 @@ ne_payment as (
                 when _.[支払区分] = '96' then 'その他'
                 when _.[支払区分] = '99' then '支払済'
             end,
-            case
-                when _.[支払区分] = '1' then _.[発送伝票番号]
-                when _.[クレジット承認番号] = ' ' then _.[受注番号]
+            case _.[支払区分]
+                when '1' then _.[発送伝票番号]
                 else _.[クレジット承認番号]
             end,
             _.[正味金額]
@@ -89,7 +88,7 @@ ne_payment as (
                 when _.[店舗コード] in ('3', '4') then '楽天ポイント'
                 when _.[店舗コード] in ('5', '6') then 'Yahooポイント'
             end,
-            _.[受注番号],
+            null,
             _.[ポイント数]
         ),
         (
@@ -150,8 +149,9 @@ ne_sales as (
     left join section as s on n.[店舗コード] = s.[店舗コード]
     left join staff as t on n.[オプション９] = t.[担当者]
     where
-        _.[処理日付] between @date_from_compact and @date_to_compact
-        and _.[売上額] <> 0
+        _.[売上額] <> 0
+        and _.[処理日付] >= @date_from_compact
+        and _.[処理日付] < @date_to_exclusive_compact
         and _.[作成ＰＧＭ] in ('NNB200E', 'REC_NEUR')
 ),
 
@@ -167,7 +167,9 @@ school_sales as (
         _.[決済番号] as [支払番号],
         cast(_.[支払金額] as int) as [支払金額]
     from dbo.APV_RT_SALES_PAYMENT as _
-    where _.[伝票日付] between @date_from_compact and @date_to_compact
+    where
+        _.[伝票日付] >= @date_from_compact
+        and _.[伝票日付] < @date_to_exclusive_compact
 ),
 
 pos_source as (
@@ -187,22 +189,8 @@ pos_source as (
     from dbo.APV_RF_SPOS_SALES as _
     where
         _.[取引区分] = '1'
-        and left(_.[取引日時], 10) between @date_from_hyphen and @date_to_hyphen
-),
-
-pos_other_payment as (
-    select
-        _.[送受信管理番号],
-        _.[送受信管理行番号],
-        _.[取引ＩＤ],
-        _.[その他支払方法ＩＤ],
-        _.[支払方法名],
-        cast(_.[預かり金その他] as int) as [預かり金その他]
-    from dbo.APV_RF_SPOS_SALES_PAYMENT as _
-    inner join pos_source as p
-        on
-            _.[送受信管理番号] = p.[送受信管理番号]
-            and _.[送受信管理行番号] = p.[送受信管理行番号]
+        and _.[取引日時] >= @date_from_hyphen
+        and _.[取引日時] < @date_to_exclusive_hyphen
 ),
 
 pos_payment as (
@@ -210,89 +198,68 @@ pos_payment as (
         _.[取引ＩＤ],
         _.[レシート番号],
         _.[販売員コード],
-        v.[支払方法],
-        v.[支払番号],
-        v.[支払金額]
+        p.[支払方法],
+        p.[支払番号],
+        p.[支払金額]
     from pos_source as _
     cross apply (
-        values
-        (
-            '現金',
-            null,
-            _.[内現金支払金額]
-        ),
-        (
-            case _.[取扱カード会社]
-                when ' ' then 'クレジット手入力'
-                when 'Transportation system IC' then '交通系IC'
-                else _.[取扱カード会社]
-            end,
-            right('00000' + _.[伝票番号], 5),
-            _.[内クレジット支払金額]
-        ),
-        (
-            'IMCポイント',
-            null,
-            _.[使用ポイント]
-        )
-    ) as v ([支払方法], [支払番号], [支払金額])
-    where v.[支払金額] <> 0
-    union all
-    select
-        _.[取引ＩＤ],
-        _.[レシート番号],
-        _.[販売員コード],
-        v.[支払方法],
-        v.[支払番号],
-        v.[支払金額]
-    from pos_source as _
-    outer apply (
-        select sum(p.[預かり金その他]) as [預かり金その他合計]
-        from pos_other_payment as p
-        where
-            _.[送受信管理番号] = p.[送受信管理番号]
-            and _.[送受信管理行番号] = p.[送受信管理行番号]
-    ) as o
-    cross apply (
-        values
-        (
-            '前受金',
-            null,
-            _.[合計]
-            - _.[内現金支払金額]
-            - _.[内クレジット支払金額]
-            - coalesce(o.[預かり金その他合計], 0)
-        )
-    ) as v ([支払方法], [支払番号], [支払金額])
-    where v.[支払金額] <> 0
-    union all
-    select
-        _.[取引ＩＤ],
-        _.[レシート番号],
-        _.[販売員コード],
-        v.[支払方法],
-        v.[支払番号],
-        v.[支払金額]
-    from pos_source as _
-    inner join pos_other_payment as p
-        on
-            _.[送受信管理番号] = p.[送受信管理番号]
-            and _.[送受信管理行番号] = p.[送受信管理行番号]
-    cross apply (
-        values
-        (
-            case p.[その他支払方法ＩＤ]
+        select
+            v.[支払方法],
+            v.[支払番号],
+            v.[支払金額]
+        from (
+            values
+            (
+                '現金',
+                null,
+                _.[内現金支払金額]
+            ),
+            (
+                case _.[取扱カード会社]
+                    when ' ' then 'クレジット手入力'
+                    when 'Transportation system IC' then '交通系IC'
+                    else _.[取扱カード会社]
+                end,
+                right('00000' + _.[伝票番号], 5),
+                _.[内クレジット支払金額]
+            ),
+            (
+                'IMCポイント',
+                null,
+                _.[使用ポイント]
+            ),
+            (
+                '前受金',
+                null,
+                _.[合計]
+                - _.[内現金支払金額]
+                - _.[内クレジット支払金額]
+                - coalesce((
+                    select sum(cast(o.[預かり金その他] as int))
+                    from dbo.APV_RF_SPOS_SALES_PAYMENT as o
+                    where
+                        o.[送受信管理番号] = _.[送受信管理番号]
+                        and o.[送受信管理行番号] = _.[送受信管理行番号]
+                ), 0)
+            )
+        ) as v ([支払方法], [支払番号], [支払金額])
+        union all
+        select
+            case o.[その他支払方法ＩＤ]
                 when '18' then 'IMCポイント'
-                else p.[支払方法名]
-            end,
-            case p.[その他支払方法ＩＤ]
+                else o.[支払方法名]
+            end as [支払方法],
+            case o.[その他支払方法ＩＤ]
                 when '18' then null
                 else _.[メモ]
-            end,
-            p.[預かり金その他]
-        )
-    ) as v ([支払方法], [支払番号], [支払金額])
-    where v.[支払金額] <> 0
+            end as [支払番号],
+            cast(o.[預かり金その他] as int) as [支払金額]
+        from dbo.APV_RF_SPOS_SALES_PAYMENT as o
+        where
+            o.[送受信管理番号] = _.[送受信管理番号]
+            and o.[送受信管理行番号] = _.[送受信管理行番号]
+    ) as p
+    where p.[支払金額] <> 0
 ),
 
 pos_sales as (
@@ -310,8 +277,9 @@ pos_sales as (
     left join pos_payment as p on _.[備考] = p.[取引ＩＤ]
     left join staff as t on p.[販売員コード] = t.[担当者]
     where
-        _.[処理日付] between @date_from_compact and @date_to_compact
-        and _.[売上額] <> 0
+        _.[売上額] <> 0
+        and _.[処理日付] >= @date_from_compact
+        and _.[処理日付] < @date_to_exclusive_compact
         and _.[作成ＰＧＭ] = 'TFO300E'
 )
 
