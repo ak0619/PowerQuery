@@ -69,7 +69,7 @@ ne_payment as (
                 when _.[支払区分] = '56' then 'PAYGENT ATM'
                 when _.[支払区分] = '57' then 'PAYGENT JCB'
                 when _.[支払区分] = '60' then 'PayPal'
-                when _.[支払区分] = '67' then 'Payo_er'
+                when _.[支払区分] = '67' then 'Payoneer'
                 when _.[支払区分] = '70' then 'MS バーチャル口座'
                 when _.[支払区分] = '85' then 'ポイント全額支払い'
                 when _.[支払区分] = '95' then '売掛'
